@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+wandb/
+results/*.png
+results/checkpoints/
+data/*.jsonl
+data/eval_hashes.json
+*.ipynb_checkpoints/
+.DS_Store

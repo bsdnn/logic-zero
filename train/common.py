@@ -133,3 +133,53 @@ def extract_answer(response: str, n: int) -> dict[str, str] | None:
     if parsed is not None:
         return parsed
     return None
+
+
+# ---------------------------------------------------------------------------
+# Model / chat-template helpers
+# ---------------------------------------------------------------------------
+# Imports of torch / transformers / peft are deferred so that pure-Python users
+# of the verifier helpers above (data generation, tests) don't pay the import
+# cost and don't fail on minimal environments.
+
+BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+
+
+def load_base_model(dtype=None):
+    """Load the base Qwen model + tokenizer. Imports torch/transformers lazily."""
+    import torch  # noqa: WPS433
+    from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: WPS433
+
+    if dtype is None:
+        dtype = torch.bfloat16
+    tok = AutoTokenizer.from_pretrained(BASE_MODEL)
+    model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, torch_dtype=dtype)
+    return model, tok
+
+
+def make_lora_config(r: int = 16, alpha: int = 32):
+    """Build the shared LoRA config used by SFT + DPO + GRPO."""
+    from peft import LoraConfig  # noqa: WPS433
+
+    return LoraConfig(
+        r=r,
+        lora_alpha=alpha,
+        lora_dropout=0.05,
+        bias="none",
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        task_type="CAUSAL_LM",
+    )
+
+
+def to_chat(tokenizer, puzzle: str, completion: str | None = None) -> str:
+    """Apply the model's chat template. If `completion` is None we add the
+    generation prompt (inference); otherwise we render a full user+assistant
+    turn (training)."""
+    messages = [{"role": "user", "content": puzzle}]
+    if completion is not None:
+        messages.append({"role": "assistant", "content": completion})
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=(completion is None),
+    )

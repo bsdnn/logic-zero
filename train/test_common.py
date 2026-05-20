@@ -26,3 +26,24 @@ def test_reward_mode_has_tighter_timeout():
     """Smoke check: reward mode call returns without raising for normal input."""
     _, gt, stmts = generate_puzzle(n=3, seed=42, return_statements=True)
     assert verify_puzzle(stmts, gt, mode="reward") is True
+
+from train.reward import compute_reward
+
+def test_reward_correct_full():
+    gt = {"A": "knight", "B": "knave"}
+    response = "<think>" + "x" * 100 + "</think><answer>A: knight, B: knave</answer>"
+    assert compute_reward(response, gt) == 0.5 + 2.0 + 0.3  # format + correct + length
+
+def test_reward_wrong_answer_no_correctness():
+    gt = {"A": "knight", "B": "knave"}
+    response = "<think>" + "x" * 100 + "</think><answer>A: knave, B: knave</answer>"
+    assert compute_reward(response, gt) == 0.5 + 0.3  # format + length only
+
+def test_reward_no_format_no_length():
+    gt = {"A": "knight"}
+    assert compute_reward("knight", gt) == 0.0  # no tags, response too short
+
+def test_reward_only_format():
+    gt = {"A": "knight"}
+    response = "<think></think><answer></answer>"  # short, no answer, has tags
+    assert compute_reward(response, gt) == 0.5  # format only

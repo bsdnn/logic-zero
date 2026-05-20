@@ -63,10 +63,11 @@ def _random_statement(rng: random.Random, speaker: str, labels: list[str], gt: d
     """Construct a statement whose truth value matches the speaker's identity."""
     must_be_true = gt[speaker] == "knight"
     # Try candidates until one matches required truth value.
+    # Note: self_knight / self_knave are tautological/contradictory in K&K semantics,
+    # so we exclude them from the candidate pool and use them only as a fallback.
     for _ in range(50):
         kind = rng.choice([
             "is", "same", "diff", "at_least_knights", "at_least_knaves",
-            "self_knight", "self_knave",
         ])
         if kind == "is":
             target = rng.choice(labels)

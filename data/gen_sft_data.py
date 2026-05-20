@@ -1,6 +1,7 @@
 """Generate SFT training examples by asking DeepSeek-V3 to solve K&K puzzles,
 keeping only those whose answer matches ground truth.
-Per-n quota table (spec §5.2): 250/250/500/500/500 verified for n=2..6."""
+Per-n quota table: n=2 capped at 30 (puzzle space ~67 unique solutions),
+n=3: 250, n=4-6: 500 each. Total target ~1780 verified."""
 from __future__ import annotations
 import argparse
 import json
@@ -15,7 +16,9 @@ from data.gen_puzzles import generate_puzzle
 from train.common import count_solutions, extract_answer, VerifierTimeout
 from data.gen_eval_data import hash_puzzle, TRAIN_SEED_START
 
-TARGETS = {2: 250, 3: 250, 4: 500, 5: 500, 6: 500}
+# n=2: puzzle space exhausts at ~67 unique solutions; cap at 30 to match eval/dev.
+# n=3: 250; n=4-6: 500 each.  Total target ≈ 1780 verified examples.
+TARGETS = {2: 30, 3: 250, 4: 500, 5: 500, 6: 500}
 
 PROMPT_TEMPLATE = """Solve this Knights and Knaves puzzle. Show step-by-step reasoning inside <think></think> tags, then give the final answer inside <answer></answer> tags in the format "A: knight, B: knave, ...".
 
@@ -45,7 +48,10 @@ def main():
     seed = TRAIN_SEED_START
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("")  # truncate
+    # Append mode: if output already exists (resumed session), keep prior work.
+    # Truncate only if file is empty or doesn't exist.
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        out_path.write_text("")  # create / clear
 
     for n, target in TARGETS.items():
         verified = 0

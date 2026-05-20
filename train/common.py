@@ -1,5 +1,6 @@
 """Shared helpers used by both training and evaluation."""
 from __future__ import annotations
+import re
 import z3
 from typing import Literal
 
@@ -76,3 +77,59 @@ def count_solutions(statements: dict[str, Statement], n: int, timeout_ms: int = 
         block = z3.Or([vars[lab] != model.eval(vars[lab]) for lab in vars])
         s.add(block)
     return found  # > cap
+
+
+def check_format(response: str) -> bool:
+    """Canonical 'well-formed output' predicate. Used by reward function and SFT
+    format-compliance metric so the two never disagree (spec §6.2)."""
+    has_think = "<think>" in response and "</think>" in response
+    has_answer = "<answer>" in response and "</answer>" in response
+    return has_think and has_answer
+
+_STRICT_RE = re.compile(
+    r"<answer>\s*([A-Z]\s*:\s*(?:knight|knave)(?:\s*,\s*[A-Z]\s*:\s*(?:knight|knave))*)\s*</answer>",
+    re.IGNORECASE,
+)
+_ANSWER_BLOCK_RE = re.compile(r"<answer>(.*?)</answer>", re.IGNORECASE | re.DOTALL)
+_PAIR_RE = re.compile(
+    r"([A-Z])\s*(?::|=|→|\bis\s+a\b)\s*(knight|knave)",
+    re.IGNORECASE,
+)
+
+def _parse_pairs(text: str, n: int) -> dict[str, str] | None:
+    seen: dict[str, str] = {}
+    for m in _PAIR_RE.finditer(text):
+        label = m.group(1).upper()
+        identity = m.group(2).lower()
+        if label in seen:
+            return None  # duplicate
+        seen[label] = identity
+    if len(seen) != n:
+        return None
+    expected_labels = set(chr(ord("A") + i) for i in range(n))
+    if set(seen.keys()) != expected_labels:
+        return None
+    return seen
+
+def extract_answer(response: str, n: int) -> dict[str, str] | None:
+    """Extract identity assignment from a model response.
+    Strict-first, with case-insensitive + alt-separator fallbacks (spec §6.1)."""
+    # Strict pattern attempt
+    m = _STRICT_RE.search(response)
+    if m:
+        body = m.group(1)
+        parsed = _parse_pairs(body, n)
+        if parsed is not None:
+            return parsed
+    # Fallback 1: relaxed parse inside <answer> tags
+    block_match = _ANSWER_BLOCK_RE.search(response)
+    if block_match:
+        parsed = _parse_pairs(block_match.group(1), n)
+        if parsed is not None:
+            return parsed
+    # Fallback 2: tail of response (last 200 chars) when no answer tags
+    tail = response[-200:]
+    parsed = _parse_pairs(tail, n)
+    if parsed is not None:
+        return parsed
+    return None

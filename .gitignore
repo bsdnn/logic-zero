@@ -6,7 +6,13 @@ __pycache__/
 wandb/
 results/*.png
 results/checkpoints/
+logs/
+# Ignore all jsonl + jsonl.* (backup) by default; whitelist specific data files.
 data/*.jsonl
-data/eval_hashes.json
+data/*.jsonl.*
+!data/eval_data.jsonl
+!data/dev_data.jsonl
+!data/sft_data.jsonl
+# eval_hashes.json is tracked so Colab clones don't need to regenerate eval data.
 *.ipynb_checkpoints/
 .DS_Store

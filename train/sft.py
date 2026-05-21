@@ -61,6 +61,10 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Auto-pick precision: bf16 on Ampere+ (L4/A100/etc), fp16 on T4.
+    use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    print(f"[precision] {'bf16' if use_bf16 else 'fp16'} (CUDA: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu'})")
+
     model, tok = load_base_model()
     model = get_peft_model(model, make_lora_config())
 
@@ -78,11 +82,12 @@ def main():
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
-        bf16=True,
+        bf16=use_bf16,
+        fp16=not use_bf16,
         logging_steps=10,
         save_strategy="no",  # we save ourselves in the callback
         max_seq_length=args.max_seq_length,
-        report_to="wandb",
+        report_to="wandb" if os.environ.get("WANDB_API_KEY") else "none",
         run_name="logic-zero-sft",
     )
 

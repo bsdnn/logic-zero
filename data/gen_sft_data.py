@@ -18,8 +18,10 @@ from data.gen_eval_data import hash_puzzle, TRAIN_SEED_START
 
 # n=2: puzzle space exhausts at ~67 unique solutions; eval+dev already
 # consume 40 (30+10), so SFT capped at 20 to leave ~7 headroom.
-# n=3: 250; n=4-6: 500 each.  Total target ≈ 1770 verified examples.
-TARGETS = {2: 20, 3: 250, 4: 500, 5: 500, 6: 500}
+# n=3: 250; n=4: 500.  n=5/6 reduced to 250 each (DeepSeek ~50% yield +
+# ~15-20s/record makes the full 500 prohibitively long for marginal value).
+# Total target ≈ 1270 verified examples.
+TARGETS = {2: 20, 3: 250, 4: 500, 5: 250, 6: 250}
 
 PROMPT_TEMPLATE = """Solve this Knights and Knaves puzzle. Show step-by-step reasoning inside <think></think> tags, then give the final answer inside <answer></answer> tags in the format "A: knight, B: knave, ...".
 

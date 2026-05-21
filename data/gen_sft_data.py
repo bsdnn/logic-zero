@@ -16,9 +16,10 @@ from data.gen_puzzles import generate_puzzle
 from train.common import count_solutions, extract_answer, VerifierTimeout
 from data.gen_eval_data import hash_puzzle, TRAIN_SEED_START
 
-# n=2: puzzle space exhausts at ~67 unique solutions; cap at 30 to match eval/dev.
-# n=3: 250; n=4-6: 500 each.  Total target ≈ 1780 verified examples.
-TARGETS = {2: 30, 3: 250, 4: 500, 5: 500, 6: 500}
+# n=2: puzzle space exhausts at ~67 unique solutions; eval+dev already
+# consume 40 (30+10), so SFT capped at 20 to leave ~7 headroom.
+# n=3: 250; n=4-6: 500 each.  Total target ≈ 1770 verified examples.
+TARGETS = {2: 20, 3: 250, 4: 500, 5: 500, 6: 500}
 
 PROMPT_TEMPLATE = """Solve this Knights and Knaves puzzle. Show step-by-step reasoning inside <think></think> tags, then give the final answer inside <answer></answer> tags in the format "A: knight, B: knave, ...".
 
@@ -48,16 +49,30 @@ def main():
     seed = TRAIN_SEED_START
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Append mode: if output already exists (resumed session), keep prior work.
-    # Truncate only if file is empty or doesn't exist.
-    if not out_path.exists() or out_path.stat().st_size == 0:
-        out_path.write_text("")  # create / clear
+    # Resume support: if output file exists, load its hashes into excluded so
+    # we don't regenerate already-saved puzzles, AND tally existing verified
+    # counts per-n so we skip already-done buckets.
+    existing_per_n: dict[int, int] = {n: 0 for n in TARGETS}
+    if out_path.exists() and out_path.stat().st_size > 0:
+        for line in out_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            excluded.add(rec["hash"])
+            if rec["n"] in existing_per_n:
+                existing_per_n[rec["n"]] += 1
+        print(f"[resume] found existing records per n: {existing_per_n}", file=sys.stderr)
+    else:
+        out_path.write_text("")  # create empty
 
     for n, target in TARGETS.items():
-        verified = 0
+        verified = existing_per_n.get(n, 0)
         attempts = 0
         retried = set()
-        print(f"[n={n}] target={target}", file=sys.stderr)
+        if verified >= target:
+            print(f"[n={n}] already at {verified}/{target}, skipping", file=sys.stderr)
+            continue
+        print(f"[n={n}] target={target} (have {verified})", file=sys.stderr)
         while verified < target:
             # Generate a fresh valid puzzle not in excluded
             while True:

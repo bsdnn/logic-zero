@@ -28,10 +28,15 @@ class DevAccuracyCallback(TrainerCallback):
         # (10x faster), and ckpt is meaningless without backward.
         model.eval()
         prev_cache = getattr(model.config, "use_cache", True)
-        prev_ckpt = getattr(model, "is_gradient_checkpointing", False)
-        if prev_ckpt:
+        # Always try to disable ckpt (the `is_gradient_checkpointing` flag is
+        # unreliable on PEFT-wrapped models — just call disable and catch).
+        ckpt_was_on = False
+        for tgt in (model, getattr(model, "base_model", None)):
+            if tgt is None:
+                continue
             try:
-                model.gradient_checkpointing_disable()
+                tgt.gradient_checkpointing_disable()
+                ckpt_was_on = True
             except Exception:
                 pass
         model.config.use_cache = True
@@ -45,8 +50,11 @@ class DevAccuracyCallback(TrainerCallback):
                     prompt = to_chat(self.tok, rec["puzzle"])
                     inputs = self.tok(prompt, return_tensors="pt").to(model.device)
                     output = model.generate(
-                        **inputs, max_new_tokens=400, do_sample=False,
+                        **inputs, max_new_tokens=300, do_sample=False,
                         pad_token_id=self.tok.eos_token_id,
+                        # Explicitly unset sampling params so transformers
+                        # doesn't warn 3 times per puzzle.
+                        temperature=None, top_p=None, top_k=None,
                     )
                     resp = self.tok.decode(output[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
                     pred = extract_answer(resp, n=len(rec["ground_truth"]))
@@ -58,7 +66,7 @@ class DevAccuracyCallback(TrainerCallback):
         finally:
             # Restore training-time settings.
             model.config.use_cache = prev_cache
-            if prev_ckpt:
+            if ckpt_was_on:
                 try:
                     model.gradient_checkpointing_enable()
                 except Exception:

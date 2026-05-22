@@ -23,28 +23,55 @@ class DevAccuracyCallback(TrainerCallback):
         self.best_epoch = -1
 
     def on_epoch_end(self, args, state, control, model=None, **kwargs):
+        # Training mode forces use_cache=False + gradient_checkpointing.
+        # For generation we want the opposite — KV cache is critical
+        # (10x faster), and ckpt is meaningless without backward.
         model.eval()
+        prev_cache = getattr(model.config, "use_cache", True)
+        prev_ckpt = getattr(model, "is_gradient_checkpointing", False)
+        if prev_ckpt:
+            try:
+                model.gradient_checkpointing_disable()
+            except Exception:
+                pass
+        model.config.use_cache = True
+
+        import time
+        t0 = time.time()
         correct = 0
-        with torch.no_grad():
-            for rec in self.dev:
-                prompt = to_chat(self.tok, rec["puzzle"])
-                inputs = self.tok(prompt, return_tensors="pt").to(model.device)
-                output = model.generate(
-                    **inputs, max_new_tokens=400, do_sample=False, temperature=0.0,
-                    pad_token_id=self.tok.eos_token_id,
-                )
-                resp = self.tok.decode(output[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-                pred = extract_answer(resp, n=len(rec["ground_truth"]))
-                if pred == rec["ground_truth"]:
-                    correct += 1
+        try:
+            with torch.no_grad():
+                for i, rec in enumerate(self.dev):
+                    prompt = to_chat(self.tok, rec["puzzle"])
+                    inputs = self.tok(prompt, return_tensors="pt").to(model.device)
+                    output = model.generate(
+                        **inputs, max_new_tokens=400, do_sample=False,
+                        pad_token_id=self.tok.eos_token_id,
+                    )
+                    resp = self.tok.decode(output[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+                    pred = extract_answer(resp, n=len(rec["ground_truth"]))
+                    if pred == rec["ground_truth"]:
+                        correct += 1
+                    if (i + 1) % 25 == 0:
+                        elapsed = time.time() - t0
+                        print(f"  [dev] {i+1}/{len(self.dev)}  acc_so_far={correct/(i+1):.3f}  {elapsed:.0f}s elapsed", flush=True)
+        finally:
+            # Restore training-time settings.
+            model.config.use_cache = prev_cache
+            if prev_ckpt:
+                try:
+                    model.gradient_checkpointing_enable()
+                except Exception:
+                    pass
+            model.train()
+
         acc = correct / len(self.dev)
-        print(f"[epoch {state.epoch:.0f}] dev_acc={acc:.3f}", flush=True)
+        print(f"[epoch {state.epoch:.0f}] dev_acc={acc:.3f}  ({time.time()-t0:.0f}s)", flush=True)
         if acc > self.best_acc:
             self.best_acc = acc
             self.best_epoch = int(state.epoch)
             model.save_pretrained(self.out_dir / "best")
             (self.out_dir / "best" / "dev_acc.json").write_text(json.dumps({"acc": acc, "epoch": self.best_epoch}))
-        model.train()
 
 def main():
     parser = argparse.ArgumentParser()

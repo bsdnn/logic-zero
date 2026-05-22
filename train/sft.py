@@ -50,8 +50,13 @@ class DevAccuracyCallback(TrainerCallback):
                     prompt = to_chat(self.tok, rec["puzzle"])
                     inputs = self.tok(prompt, return_tensors="pt").to(model.device)
                     output = model.generate(
-                        **inputs, max_new_tokens=300, do_sample=False,
+                        **inputs, max_new_tokens=700, do_sample=False,
                         pad_token_id=self.tok.eos_token_id,
+                        # Stop as soon as </answer> token shown up to save
+                        # ~30% of generation time on n=2/3 where reasoning
+                        # is short.
+                        stop_strings=["</answer>"],
+                        tokenizer=self.tok,
                         # Explicitly unset sampling params so transformers
                         # doesn't warn 3 times per puzzle.
                         temperature=None, top_p=None, top_k=None,

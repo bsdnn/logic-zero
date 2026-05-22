@@ -52,10 +52,12 @@ def main():
     parser.add_argument("--dev-data", default="data/dev_data.jsonl")
     parser.add_argument("--out-dir", default="results/checkpoints/sft")
     parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--batch-size", type=int, default=4)
-    parser.add_argument("--grad-accum", type=int, default=4)
+    parser.add_argument("--batch-size", type=int, default=2)  # was 4 → OOM on L4
+    parser.add_argument("--grad-accum", type=int, default=8)  # was 4; keep effective batch=16
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--max-seq-length", type=int, default=1024)
+    parser.add_argument("--no-grad-ckpt", action="store_true",
+                        help="Disable gradient checkpointing (faster but uses much more VRAM).")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -67,6 +69,17 @@ def main():
 
     model, tok = load_base_model()
     model = get_peft_model(model, make_lora_config())
+
+    # Gradient checkpointing: trades ~20% speed for ~40% activation-memory cut.
+    # Essential on 22GB L4 with bs=2, seq=1024.  PEFT-on-frozen-base needs
+    # enable_input_require_grads() so ckpt'd activations can be reconstructed.
+    use_grad_ckpt = not args.no_grad_ckpt
+    if use_grad_ckpt:
+        model.gradient_checkpointing_enable()
+        model.enable_input_require_grads()
+        # PEFT wraps the base model; disable cache for ckpt to work.
+        if hasattr(model, "config"):
+            model.config.use_cache = False
 
     sft_records = [json.loads(l) for l in open(args.sft_data)]
     dev_records = [json.loads(l) for l in open(args.dev_data)]
@@ -84,6 +97,7 @@ def main():
         learning_rate=args.lr,
         bf16=use_bf16,
         fp16=not use_bf16,
+        gradient_checkpointing=use_grad_ckpt,
         logging_steps=10,
         save_strategy="no",  # we save ourselves in the callback
         max_seq_length=args.max_seq_length,
@@ -91,13 +105,19 @@ def main():
         run_name="logic-zero-sft",
     )
 
-    trainer = SFTTrainer(
-        model=model,
-        args=cfg,
-        train_dataset=dataset,
-        tokenizer=tok,
-        callbacks=[DevAccuracyCallback(tok, dev_records, out_dir)],
-    )
+    # trl renamed tokenizer→processing_class around 0.13; support both.
+    try:
+        trainer = SFTTrainer(
+            model=model, args=cfg, train_dataset=dataset,
+            processing_class=tok,
+            callbacks=[DevAccuracyCallback(tok, dev_records, out_dir)],
+        )
+    except TypeError:
+        trainer = SFTTrainer(
+            model=model, args=cfg, train_dataset=dataset,
+            tokenizer=tok,
+            callbacks=[DevAccuracyCallback(tok, dev_records, out_dir)],
+        )
     trainer.train()
     print(f"Best dev_acc={trainer.callback_handler.callbacks[-1].best_acc:.3f} at epoch {trainer.callback_handler.callbacks[-1].best_epoch}")
 

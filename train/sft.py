@@ -50,11 +50,12 @@ class DevAccuracyCallback(TrainerCallback):
                     prompt = to_chat(self.tok, rec["puzzle"])
                     inputs = self.tok(prompt, return_tensors="pt").to(model.device)
                     output = model.generate(
-                        **inputs, max_new_tokens=700, do_sample=False,
+                        **inputs, max_new_tokens=1000, do_sample=False,
                         pad_token_id=self.tok.eos_token_id,
                         # Stop as soon as </answer> token shown up to save
                         # ~30% of generation time on n=2/3 where reasoning
-                        # is short.
+                        # is short.  1000 tokens covers n=6 p95 (~753 tok)
+                        # without truncating completions mid-answer.
                         stop_strings=["</answer>"],
                         tokenizer=self.tok,
                         # Explicitly unset sampling params so transformers
